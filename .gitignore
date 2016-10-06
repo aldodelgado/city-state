@@ -13,6 +13,8 @@
 *.a
 mkmf.log
 *.gem
+counties.*
 cities.*
 states.*
 db/countries.yml
+**/.DS_Store

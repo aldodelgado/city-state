@@ -7,7 +7,7 @@ module CS
   MAXMIND_DB_FN = File.join(FILES_FOLDER, "GeoLite2-City-Locations-en.csv")
   COUNTRIES_FN = File.join(FILES_FOLDER, "countries.yml")
 
-  @countries, @states, @cities = [{}, {}, {}]
+  @countries, @states, @cities, @counties = [{}, {}, {}, {}]
   @current_country = nil # :US, :BR, :GB, :JP, ...
 
   def self.update_maxmind
@@ -93,18 +93,49 @@ module CS
       end
     end
 
+
     # sort
     cities = Hash[cities.sort]
     states = Hash[states.sort]
+    counties = Hash[(build_counties(country) || {}).sort]
     cities.each { |k, v| cities[k].sort! }
 
     # save to states.us and cities.us
     states_fn = File.join(FILES_FOLDER, "states.#{country.downcase}")
+    counties_fn = File.join(FILES_FOLDER, "counties.#{country.downcase}")
     cities_fn = File.join(FILES_FOLDER, "cities.#{country.downcase}")
-    File.open(states_fn, "w") { |f| f.write states.to_yaml }
-    File.open(cities_fn, "w") { |f| f.write cities.to_yaml }
-    File.chmod(0666, states_fn, cities_fn) # force permissions to rw_rw_rw_ (issue #3)
+
+    File.open(states_fn, "w") { |f| f.write states.to_yaml } if states.any?
+    File.open(counties_fn, "w") { |f| f.write counties.to_yaml } if counties.any?
+    File.open(cities_fn, "w") { |f| f.write cities.to_yaml } if cities.any?
+    File.chmod(0666, states_fn) if states.any?
+    File.chmod(0666, counties_fn) if counties.any?
+    File.chmod(0666, cities_fn) if cities.any?
     true
+  end
+
+  def self.build_counties(country)
+    # csv file path
+    csv_file_path = File.join(FILES_FOLDER, "#{country.to_s.downcase}.counties.csv")
+    return unless File.exists? csv_file_path
+    state = 0
+    county = 1
+    counties = {}
+
+    # read CSV line by line
+    File.foreach(csv_file_path) do |line|
+      rec = line.split(",")
+      next if rec[state].blank?
+
+      # normalize
+      rec[state] = rec[state].to_sym
+      rec[county].gsub!(/\n/, "")
+
+      # cities list: {CA: ["Alameda", "Alpine", "Amador"]}
+      counties.merge!({ rec[state] => [] }) unless counties.has_key?(rec[state])
+      counties[rec[state]] << rec[county]
+    end
+    counties
   end
 
   def self.current_country
@@ -113,7 +144,7 @@ module CS
     # we don't have used this method yet: discover by the file extension
     fn = Dir[File.join(FILES_FOLDER, "cities.*")].last
     @current_country = fn.blank? ? nil : fn.split(".").last
-    
+
     # there's no files: we'll install and use :US
     if @current_country.blank?
       @current_country = :US
@@ -121,7 +152,7 @@ module CS
 
     # we find a file: normalize the extension to something like :US
     else
-      @current_country = @current_country.to_s.upcase.to_sym    
+      @current_country = @current_country.to_s.upcase.to_sym
     end
 
     @current_country
@@ -136,13 +167,19 @@ module CS
     country = self.current_country
 
     # load the country file
-    if @cities[country].blank?
-      cities_fn = File.join(FILES_FOLDER, "cities.#{country.to_s.downcase}")
-      self.install(country) if ! File.exists? cities_fn
-      @cities[country] = YAML::load_file(cities_fn).symbolize_keys
-    end
+    load_file(__method__, country)
 
     @cities[country][state.to_s.upcase.to_sym] || []
+  end
+
+  def self.counties(state, country = nil)
+    self.current_country = country if country.present? # set as current_country
+    country = self.current_country
+
+    # load the country file
+    load_file(__method__, country)
+    return [] unless @counties[country]
+    @counties[country][state.to_s.upcase.to_sym] || []
   end
 
   def self.states(country)
@@ -150,13 +187,21 @@ module CS
     country = self.current_country # normalized
 
     # load the country file
-    if @states[country].blank?
-      states_fn = File.join(FILES_FOLDER, "states.#{country.to_s.downcase}")
-      self.install(country) if ! File.exists? states_fn
-      @states[country] = YAML::load_file(states_fn).symbolize_keys
-    end
+    load_file(__method__, country)
 
     @states[country] || {}
+  end
+
+  def self.load_file(method_name, country)
+    instance = instance_variable_get("@#{method_name}")
+    return instance[country] unless instance[country].blank?
+
+    collection_fn = File.join(FILES_FOLDER, "#{method_name}.#{country.to_s.downcase}")
+    self.install(country) unless File.exists? collection_fn
+    # we must verify again if the file exists because there are countries
+    # that doesn't have counties
+    instance[country] = YAML::load_file(collection_fn).symbolize_keys if File.exists? collection_fn
+    instance_variable_set("@#{method_name}", instance)
   end
 
   # list of all countries of the world (countries.yml)
@@ -166,8 +211,8 @@ module CS
       update_maxmind unless File.exists? MAXMIND_DB_FN
 
       # reads CSV line by line
-      File.foreach(MAXMIND_DB_FN) do |line|
-        rec = line.split(",")
+      File.foreach(MAXMIND_DB_FN).with_index.reject{ |_, index| index == 0 }.each do |line|
+        rec = line.first.split(",")
         next if rec[COUNTRY].blank? || rec[COUNTRY_LONG].blank? # jump empty records
         country = rec[COUNTRY].to_s.upcase.to_sym # normalize to something like :US, :BR
         if @countries[country].blank?
