@@ -168,7 +168,7 @@ module CS
 
     # load the country file
     load_file(__method__, country)
-
+    return [] unless @cities[country]
     @cities[country][state.to_s.upcase.to_sym] || []
   end
 
