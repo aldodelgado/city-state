@@ -7,7 +7,7 @@ module CS
   MAXMIND_DB_FN = File.join(FILES_FOLDER, "GeoLite2-City-Locations-en.csv")
   COUNTRIES_FN = File.join(FILES_FOLDER, "countries.yml")
 
-  @countries, @states, @cities, @counties = [{}, {}, {}, {}]
+  @countries, @states, @cities, @counties, @zipcode = [{}, {}, {}, {}, {}]
   @current_country = nil # :US, :BR, :GB, :JP, ...
 
   def self.update_maxmind
@@ -36,7 +36,7 @@ module CS
     Dir[File.join(FILES_FOLDER, "states.*")].each do |state_fn|
       self.install(state_fn.split(".").last.upcase.to_sym) # reinstall country
     end
-    @countries, @states, @cities = [{}, {}, {}] # invalidades cache
+    @countries, @states, @cities, @counties, @zipcode = [{}, {}, {}, {}, {}] # invalidades cache
     File.delete COUNTRIES_FN # force countries.yml to be generated at next call of CS.countries
     true
   end
@@ -98,19 +98,23 @@ module CS
     cities = Hash[cities.sort]
     states = Hash[states.sort]
     counties = Hash[(build_counties(country) || {}).sort]
+    zipcodes = Hash[(build_zipcodes(country) || {}).sort]
     cities.each { |k, v| cities[k].sort! }
 
     # save to states.us and cities.us
     states_fn = File.join(FILES_FOLDER, "states.#{country.downcase}")
     counties_fn = File.join(FILES_FOLDER, "counties.#{country.downcase}")
     cities_fn = File.join(FILES_FOLDER, "cities.#{country.downcase}")
+    zipcodes_fn = File.join(FILES_FOLDER, "zipcodes.#{country.downcase}")
 
     File.open(states_fn, "w") { |f| f.write states.to_yaml } if states.any?
     File.open(counties_fn, "w") { |f| f.write counties.to_yaml } if counties.any?
     File.open(cities_fn, "w") { |f| f.write cities.to_yaml } if cities.any?
+    File.open(zipcodes_fn, "w") { |f| f.write zipcodes.to_yaml } if zipcodes.any?
     File.chmod(0666, states_fn) if states.any?
     File.chmod(0666, counties_fn) if counties.any?
     File.chmod(0666, cities_fn) if cities.any?
+    File.chmod(0666, zipcodes_fn) if zipcodes.any?
     true
   end
 
@@ -136,6 +140,40 @@ module CS
       counties[rec[state]] << rec[county]
     end
     counties
+  end
+
+  def self.build_zipcodes(country)
+    # csv file path
+    csv_file_path = File.join(
+      FILES_FOLDER,
+      "#{country.to_s.downcase}.zipcodes.csv"
+    )
+    return unless File.exist? csv_file_path
+    zipcode = 0
+    city = 1
+    state = 2
+    county = 3
+    zipcodes = {}
+
+    # read CSV line by line
+    File.foreach(csv_file_path) do |line|
+      rec = line.split(',')
+      next if rec[zipcode].blank?
+
+      # normalize
+      rec[zipcode] = rec[zipcode].to_sym
+      # rec[state] = rec[state].to_sym
+      rec[city].gsub!(/\n/, '')
+      rec[state].gsub!(/\n/, '')
+      rec[county].gsub!(/\n/, '')
+
+      # # cities list: {CA: ["Alameda", "Alpine", "Amador"]}
+      zipcodes[rec[zipcode]] = {} unless zipcodes.key?(rec[zipcode])
+      zipcodes[rec[zipcode]][:state] = rec[state]
+      zipcodes[rec[zipcode]][:county] = rec[county].titleize
+      zipcodes[rec[zipcode]][:city] = rec[city]
+    end
+    zipcodes
   end
 
   def self.current_country
@@ -192,11 +230,20 @@ module CS
     @states[country] || {}
   end
 
+  def self.zipcode(zipcode, country = nil)
+    self.current_country = country if country.present? # set as current_country
+    country = self.current_country
+
+    # load the country file
+    load_file(__method__, country)
+    return {} unless @zipcode[country]
+    @zipcode[country][zipcode.to_s.to_sym] || {}
+  end
+
   def self.load_file(method_name, country)
     instance = instance_variable_get("@#{method_name}")
     return instance[country] unless instance[country].blank?
-
-    collection_fn = File.join(FILES_FOLDER, "#{method_name}.#{country.to_s.downcase}")
+    collection_fn = File.join(FILES_FOLDER, "#{method_name.to_s.pluralize}.#{country.to_s.downcase}")
     self.install(country) unless File.exists? collection_fn
     # we must verify again if the file exists because there are countries
     # that doesn't have counties
