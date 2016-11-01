@@ -26,6 +26,12 @@ CS.counties(:ak, :us)
 # => ["Aleutians East", "Aleutians West", "Anchorage", "Bethel", "Bristol Bay", "Denali", "Dillingham", "Fairbanks North Star", "Haines", "Juneau", "Kenai Peninsula", "Ketchikan Gateway", "Kodiak Island", "Lake And Peninsula", "Matanuska Susitna", "Nome", "North Slope", "Northwest Arctic", "Prince Wales Ketchikan", "Sitka", "Skagway Hoonah Angoon", "Southeast Fairbanks", "Valdez Cordova", "Wade Hampton", "Wrangell Petersburg", "Yakutat", "Yukon Koyukuk"]
 ```
 
+## List of cities of a county:
+```ruby
+CS.cities_by_county(:ca, 'Los Angeles', :us)
+# => [["Los Angeles", "West Hollywood", "Los Angeles Dodgers", "Bell", "Bell Gardens", "Beverly Hills", "Compton" ...]]
+```
+
 ## All countries of the world:
 ```ruby
 CS.countries

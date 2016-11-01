@@ -7,7 +7,7 @@ module CS
   MAXMIND_DB_FN = File.join(FILES_FOLDER, "GeoLite2-City-Locations-en.csv")
   COUNTRIES_FN = File.join(FILES_FOLDER, "countries.yml")
 
-  @countries, @states, @cities, @counties, @zipcode = [{}, {}, {}, {}, {}]
+  @countries, @states, @cities, @counties_cities, @zipcode = [{}, {}, {}, {}, {}]
   @current_country = nil # :US, :BR, :GB, :JP, ...
 
   def self.update_maxmind
@@ -36,7 +36,7 @@ module CS
     Dir[File.join(FILES_FOLDER, "states.*")].each do |state_fn|
       self.install(state_fn.split(".").last.upcase.to_sym) # reinstall country
     end
-    @countries, @states, @cities, @counties, @zipcode = [{}, {}, {}, {}, {}] # invalidades cache
+    @countries, @states, @cities, @counties_cities, @zipcode = [{}, {}, {}, {}, {}] # invalidades cache
     File.delete COUNTRIES_FN # force countries.yml to be generated at next call of CS.countries
     true
   end
@@ -99,6 +99,7 @@ module CS
     states = Hash[states.sort]
     counties = Hash[(build_counties(country) || {}).sort]
     zipcodes = Hash[(build_zipcodes(country) || {}).sort]
+    counties_cities = Hash[(build_counties_cities(country) || {}).sort]
     cities.each { |k, v| cities[k].sort! }
 
     # save to states.us and cities.us
@@ -106,15 +107,18 @@ module CS
     counties_fn = File.join(FILES_FOLDER, "counties.#{country.downcase}")
     cities_fn = File.join(FILES_FOLDER, "cities.#{country.downcase}")
     zipcodes_fn = File.join(FILES_FOLDER, "zipcodes.#{country.downcase}")
+    counties_cities_fn = File.join(FILES_FOLDER, "counties_cities.#{country.downcase}")
 
     File.open(states_fn, "w") { |f| f.write states.to_yaml } if states.any?
     File.open(counties_fn, "w") { |f| f.write counties.to_yaml } if counties.any?
     File.open(cities_fn, "w") { |f| f.write cities.to_yaml } if cities.any?
     File.open(zipcodes_fn, "w") { |f| f.write zipcodes.to_yaml } if zipcodes.any?
+    File.open(counties_cities_fn, "w") { |f| f.write counties_cities.to_yaml } if counties_cities.any?
     File.chmod(0666, states_fn) if states.any?
     File.chmod(0666, counties_fn) if counties.any?
     File.chmod(0666, cities_fn) if cities.any?
     File.chmod(0666, zipcodes_fn) if zipcodes.any?
+    File.chmod(0666, counties_cities_fn) if counties_cities.any?
     true
   end
 
@@ -138,6 +142,39 @@ module CS
       # cities list: {CA: ["Alameda", "Alpine", "Amador"]}
       counties.merge!({ rec[state] => [] }) unless counties.has_key?(rec[state])
       counties[rec[state]] << rec[county]
+    end
+    counties
+  end
+
+  def self.build_counties_cities(country)
+    # csv file path
+    csv_file_path = File.join(
+      FILES_FOLDER,
+      "#{country.to_s.downcase}.zipcodes.csv"
+    )
+    return unless File.exist? csv_file_path
+    zipcode = 0
+    city = 1
+    state = 2
+    county = 3
+    counties = {}
+
+    # read CSV line by line
+    File.foreach(csv_file_path) do |line|
+      rec = line.split(',')
+      next if rec[zipcode].blank?
+
+      # normalize
+      rec[state].gsub!(/\n/, '')
+      rec[city].gsub!(/\n/, '')
+      rec[county].gsub!(/\n/, '')
+      rec[state] = rec[state].upcase.to_sym
+      rec[county] = rec[county].titleize.to_sym
+
+      counties[rec[state]] = {} unless counties.key?(rec[state])
+      counties[rec[state]][rec[county]] = [] unless counties[rec[state]].key?(rec[county])
+      next if counties[rec[state]][rec[county]].include?(rec[city])
+      counties[rec[state]][rec[county]] << rec[city]
     end
     counties
   end
@@ -212,12 +249,27 @@ module CS
 
   def self.counties(state, country = nil)
     self.current_country = country if country.present? # set as current_country
-    country = self.current_country
+    country = current_country
 
     # load the country file
-    load_file(__method__, country)
-    return [] unless @counties[country]
-    @counties[country][state.to_s.upcase.to_sym] || []
+    load_file('counties_cities', country)
+    state_sym = state.to_s.upcase.to_sym
+    return [] if !@counties_cities[country] ||
+                 !@counties_cities[country][state_sym]
+    @counties_cities[country][state_sym].keys.map(&:to_s) || []
+  end
+
+  def self.cities_by_county(state, county, country = nil)
+    self.current_country = country if country.present? # set as current_country
+    country = current_country
+
+    # load the country file
+    load_file('counties_cities', country)
+    state_sym = state.to_s.upcase.to_sym
+    county_sym = county.to_s.titleize.to_sym
+    return [] if !@counties_cities[country] ||
+                 !@counties_cities[country][state_sym]
+    @counties_cities[country][state_sym][county_sym] || []
   end
 
   def self.states(country)
